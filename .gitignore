@@ -1,0 +1,4 @@
+*.npy
+.eggs
+__pycache__
+supertensortools.egg-info
