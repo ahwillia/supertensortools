@@ -4,11 +4,12 @@ import torch
 from torch import nn
 from opt_einsum import contract
 from supertensortools.tensors import AnnotatedTensor, CategoricalVariable, ScalarVariable
+from torch.nn.functional import softplus
 
 
 class TensorModel(nn.Module):
 
-    def __init__(self, *, Xs, rank, wx, ys=None, wy=None, shared_axes=[]):
+    def __init__(self, *, Xs, rank, wx, ys=None, wy=None, shared_axes=[], shared_readout_axes=[]):
 
         # Initialize nn.Module
         super(TensorModel, self).__init__()
@@ -132,10 +133,10 @@ class TensorModel(nn.Module):
                     "across tensors."
                 )
             else:
-                self.shared_factors[axis] = len(self._factor_params)
                 self._factor_params.append(nn.Parameter(
                     torch.randn(rank, dims[0])
                 ))
+                self.shared_factors[axis] = self._factor_params[-1]
 
         # Initialize non-shared factor matrices.
         self.factors = dict()
@@ -145,10 +146,10 @@ class TensorModel(nn.Module):
                 if axis in self.shared_factors.keys():
                     self.factors[X.name][axis] = self.shared_factors[axis]
                 else:
-                    self.factors[X.name][axis] = len(self._factor_params)
                     self._factor_params.append(nn.Parameter(
                         torch.randn(rank, X.shape[axis])
                     ))
+                    self.factors[X.name][axis] = self._factor_params[-1]
 
         # For nonnegative factors, project onto positive orthant.
         self.apply_prox()
@@ -160,59 +161,114 @@ class TensorModel(nn.Module):
             mean_sqnorm = sum([X.sqnorm for X in Xs]) / len(Xs)
             mean_ndim = sum([X.ndim for X in Xs]) / len(Xs)
             for axis in shared_axes:
-                fctr = self._factor_params[self.shared_factors[axis]]
-                fctr /= torch.norm(shared_factors[axis])
+                fctr = self.shared_factors[axis]
+                fctr /= torch.norm(fctr)
                 fctr *= mean_sqnorm ** (1 / mean_ndim) 
 
             # Then, scale non-shared factors.
             for X in Xs:
-                fctrs = [self._factor_params[i] for i in self.factors[X.name].values()]
                 est_sqnorm = torch.sum(torch.prod(
-                    torch.stack([f @ f.T for f in fctrs]), axis=0
+                    torch.stack([f @ f.T for f in self.factors[X.name].values()]),
+                    axis=0
                 ))
                 _n = sum([(axis not in self.shared_axes) for axis in X.axes])
-                for axis, index in self.factors[X.name].items():
+                for axis in X.axes:
                     if axis not in self.shared_axes:
-                        fctr = self._factor_params[index]
-                        fctr *= (X.sqnorm / est_sqnorm) ** (1 / _n)
+                        self.factors[X.name][axis] *= (
+                            (X.sqnorm / est_sqnorm) ** (1 / _n)
+                        )
 
-        # Initialize readout weights and biases.
-        if ys is None:
-            self.readouts = None
-            self.biases = None
-        else:
-            self.readouts = nn.ParameterList([])
-            self.biases = nn.ParameterList([])
-            for y in ys:
-                if y.components is None:
-                    self.readouts.append(nn.Parameter(
-                        1e-4 * torch.randn(y.num_features, rank)
-                    ))
-                    self.biases.append(nn.Parameter(
-                        torch.zeros(y.num_features)
-                    ))
-                else:
-                    self.readouts.append(nn.Parameter(
-                        1e-4 * torch.randn(y.num_features, len(y.components))
-                    ))
-                    self.biases.append(nn.Parameter(
-                        torch.zeros(y.num_features)
-                    ))
+        # Initialize list of factor matrix parameters.
+        self.shared_readout_axes = shared_readout_axes
+        self._readout_params = torch.nn.ParameterList([])
+        self._bias_params = torch.nn.ParameterList([])
+        self.readouts = []
+        self.biases = []
+        self.shared_readouts = dict()
+        self.shared_biases = dict()
+        y_axes = [y.axis for y in ys]
+        for axis in shared_readout_axes:
+            y = ys[y_axes.index(axis)]
+            if y.components is None:
+                self._readout_params.append(nn.Parameter(
+                    torch.zeros(y.num_features, rank)
+                ))
+                self._bias_params.append(nn.Parameter(
+                    torch.zeros(y.num_features)
+                ))
+            else:
+                self._readout_params.append(nn.Parameter(
+                    torch.zeros(y.num_features, len(y.components))
+                ))
+                self._bias_params.append(nn.Parameter(
+                    torch.zeros(y.num_features)
+                ))
+            self.shared_readouts[axis] = self._readout_params[-1]
+            self.shared_biases[axis] = self._bias_params[-1]
+        self.readouts = []
+        self.biases = []
+        for y in ys:
+            if y.axis in shared_readout_axes:
+                self.readouts.append(self.shared_readouts[y.axis])
+                self.biases.append(self.shared_biases[y.axis])
+            elif y.components is None:
+                self._readout_params.append(nn.Parameter(
+                    torch.zeros(y.num_features, rank)
+                ))
+                self._bias_params.append(nn.Parameter(
+                    torch.zeros(y.num_features)
+                ))
+                self.readouts.append(self._readout_params[-1])
+                self.biases.append(self._bias_params[-1])
+            else:
+                self._readout_params.append(nn.Parameter(
+                    torch.zeros(y.num_features, len(y.components))
+                ))
+                self._bias_params.append(nn.Parameter(
+                    torch.zeros(y.num_features)
+                ))
+                self.readouts.append(self._readout_params9[-1])
+                self.biases.append(self._bias_params[-1])
 
     @torch.no_grad()
     def apply_prox(self):
         for X in self.Xs:
-            for i, axis in enumerate(X.axes):
-                if X.nonneg[i]:
-                    fctr = self._factor_params[self.factors[X.name][axis]]
-                    fctr.relu_()
+            for axis, nonneg in zip(X.axes, X.nonneg):
+                if nonneg == "hard":
+                    self.factors[X.name][axis].relu_()
+
+    def get_factors(self, tensor_name):
+        fctrs = dict()
+        if tensor_name not in self.tensor_names:
+            raise ValueError(
+                f"AnnotatedTensor with name '{tensor_name}' not found."
+            )
+        for X in self.Xs:
+            if X.name == tensor_name:
+                for axis, nonneg in zip(X.axes, X.nonneg):
+                    if nonneg == "soft":
+                        fctrs[axis] = softplus(
+                            self.factors[X.name][axis]
+                        ).detach()
+                    else:
+                        fctrs[axis] = (
+                            self.factors[X.name][axis]
+                        ).detach()
+                return fctrs
 
     def reconstruction_loss(self):
         loss = torch.tensor(0.)
         for X, w in zip(self.Xs, self.wx):
             fctrs = []
-            for axis in X.axes:
-                fctrs.append(self._factor_params[self.factors[X.name][axis]])
+            for axis, nonneg in zip(X.axes, X.nonneg):
+                if nonneg == "soft":
+                    fctrs.append(
+                        softplus(self.factors[X.name][axis])
+                    )
+                else:
+                    fctrs.append(
+                        self.factors[X.name][axis]
+                    )
             loss += w * X.reconstruction_loss(fctrs)
         return loss
 
@@ -225,8 +281,17 @@ class TensorModel(nn.Module):
                 X = self.Xs[self.tensor_names.index(y.tensor)]
 
                 # Find low-rank factors, skipping axis that is being predicted.
-                fctr_idx = [self.factors[y.tensor][axis] for axis in X.axes if (axis != y.axis)]
-                fctrs = [self._factor_params[i] for i in fctr_idx]
+                fctrs = []
+                for axis, nonneg in zip(X.axes, X.nonneg):
+                    if axis != y.axis:
+                        if nonneg:
+                            fctrs.append(
+                                softplus(self.factors[X.name][axis])
+                            )
+                        else:
+                            fctrs.append(
+                                self.factors[X.name][axis]
+                            )
 
                 # Optionally, restrict our prediction to a limited number of components.
                 if y.components is not None:

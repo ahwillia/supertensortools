@@ -2,11 +2,13 @@ import torch
 from torch.optim import Optimizer
 from torch.optim.optimizer import required
 import warnings
+from tqdm import tqdm
 
 
 def fit_apg(
         model, *, patience, rtol=1e-1, atol=1e-4, max_iter=1000,
         trace_decoding_loss=False, trace_reconstruction_loss=False,
+        verbose=True,
     ):
     """
     Fits model using acceleration proximal gradient method.
@@ -32,6 +34,9 @@ def fit_apg(
     if trace_reconstruction_loss:
         trace["reconstruction_loss"] = []
 
+    if verbose:
+        pbar = tqdm(total=max_iter)
+
     itercount = 0
     while (not trace["converged"]) and (itercount < max_iter):
         
@@ -53,6 +58,8 @@ def fit_apg(
 
         # Count iterations.
         itercount += 1
+        if verbose:
+            pbar.update(1)
 
         # Check convergence.
         if itercount > patience:
@@ -64,6 +71,9 @@ def fit_apg(
             if rel_imp < rtol:
                 print("Converged: reached relative tolerance. rImp: ", rel_imp)
                 trace["converged"] = True
+
+    if verbose:
+        pbar.close()
 
     return trace
 
