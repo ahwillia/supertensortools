@@ -17,6 +17,7 @@ class TensorModel(nn.Module):
 
         # Initialize nn.Module
         super(TensorModel, self).__init__()
+        self.device = device
 
         # Check that Xs is a list/tuple.
         if not isinstance(Xs, (list, tuple)):
@@ -231,7 +232,7 @@ class TensorModel(nn.Module):
                 self._bias_params.append(nn.Parameter(
                     torch.zeros(y.num_features, device=device)
                 ))
-                self.readouts.append(self._readout_params9[-1])
+                self.readouts.append(self._readout_params[-1])
                 self.biases.append(self._bias_params[-1])
 
     @torch.no_grad()
@@ -261,7 +262,7 @@ class TensorModel(nn.Module):
                 return fctrs
 
     def reconstruction_loss(self):
-        loss = torch.tensor(0.)
+        loss = torch.tensor(0., device=self.device)
         for X, w in zip(self.Xs, self.wx):
             fctrs = []
             for axis, nonneg in zip(X.axes, X.nonneg):
@@ -277,7 +278,7 @@ class TensorModel(nn.Module):
         return loss
 
     def decoding_loss(self):
-        loss = torch.tensor(0.)
+        loss = torch.tensor(0., device=self.device)
         if self.ys is not None:
             for y, w, A, b in zip(self.ys, self.wy, self.readouts, self.biases):
                 
