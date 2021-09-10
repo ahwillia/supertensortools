@@ -132,7 +132,8 @@ class CategoricalVariable:
 
         if weighted_loss:
             self.weights = torch.tensor(
-                [1 / (num_classes * max(1, torch.sum(data == i).item())) for i in range(num_classes)]
+                [1 / (num_classes * max(1, torch.sum(data == i).item())) for i in range(num_classes)],
+                device=data.device
             )
         else:
             self.weights = None
