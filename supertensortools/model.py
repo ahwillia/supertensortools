@@ -9,7 +9,11 @@ from torch.nn.functional import softplus
 
 class TensorModel(nn.Module):
 
-    def __init__(self, *, Xs, rank, wx, ys=None, wy=None, shared_axes=[], shared_readout_axes=[]):
+    def __init__(
+            self, *, Xs, rank, wx,
+            ys=None, wy=None, shared_axes=[],
+            shared_readout_axes=[], device="cpu"
+        ):
 
         # Initialize nn.Module
         super(TensorModel, self).__init__()
@@ -134,7 +138,7 @@ class TensorModel(nn.Module):
                 )
             else:
                 self._factor_params.append(nn.Parameter(
-                    torch.randn(rank, dims[0])
+                    torch.randn(rank, dims[0], device=device)
                 ))
                 self.shared_factors[axis] = self._factor_params[-1]
 
@@ -147,7 +151,7 @@ class TensorModel(nn.Module):
                     self.factors[X.name][axis] = self.shared_factors[axis]
                 else:
                     self._factor_params.append(nn.Parameter(
-                        torch.randn(rank, X.shape[axis])
+                        torch.randn(rank, X.shape[axis], device=device)
                     ))
                     self.factors[X.name][axis] = self._factor_params[-1]
 
@@ -191,17 +195,17 @@ class TensorModel(nn.Module):
             y = ys[y_axes.index(axis)]
             if y.components is None:
                 self._readout_params.append(nn.Parameter(
-                    torch.zeros(y.num_features, rank)
+                    torch.zeros(y.num_features, rank, device=device)
                 ))
                 self._bias_params.append(nn.Parameter(
-                    torch.zeros(y.num_features)
+                    torch.zeros(y.num_features, device=device)
                 ))
             else:
                 self._readout_params.append(nn.Parameter(
-                    torch.zeros(y.num_features, len(y.components))
+                    torch.zeros(y.num_features, len(y.components), device=device)
                 ))
                 self._bias_params.append(nn.Parameter(
-                    torch.zeros(y.num_features)
+                    torch.zeros(y.num_features, device=device)
                 ))
             self.shared_readouts[axis] = self._readout_params[-1]
             self.shared_biases[axis] = self._bias_params[-1]
@@ -213,19 +217,19 @@ class TensorModel(nn.Module):
                 self.biases.append(self.shared_biases[y.axis])
             elif y.components is None:
                 self._readout_params.append(nn.Parameter(
-                    torch.zeros(y.num_features, rank)
+                    torch.zeros(y.num_features, rank, device=device)
                 ))
                 self._bias_params.append(nn.Parameter(
-                    torch.zeros(y.num_features)
+                    torch.zeros(y.num_features, device=device)
                 ))
                 self.readouts.append(self._readout_params[-1])
                 self.biases.append(self._bias_params[-1])
             else:
                 self._readout_params.append(nn.Parameter(
-                    torch.zeros(y.num_features, len(y.components))
+                    torch.zeros(y.num_features, len(y.components), device=device)
                 ))
                 self._bias_params.append(nn.Parameter(
-                    torch.zeros(y.num_features)
+                    torch.zeros(y.num_features, device=device)
                 ))
                 self.readouts.append(self._readout_params9[-1])
                 self.biases.append(self._bias_params[-1])
