@@ -112,6 +112,7 @@ class TensorModel(nn.Module):
             )
 
         # Store data
+        self.rank = rank
         self.wx = wx
         self.wy = wy
         self.Xs = Xs
@@ -144,17 +145,17 @@ class TensorModel(nn.Module):
                 self.shared_factors[axis] = self._factor_params[-1]
 
         # Initialize non-shared factor matrices.
-        self.factors = dict()
+        self._factors = dict()
         for X in Xs:
-            self.factors[X.name] = dict()
+            self._factors[X.name] = dict()
             for axis in X.axes:
                 if axis in self.shared_factors.keys():
-                    self.factors[X.name][axis] = self.shared_factors[axis]
+                    self._factors[X.name][axis] = self.shared_factors[axis]
                 else:
                     self._factor_params.append(nn.Parameter(
                         torch.randn(rank, X.shape[axis], device=device)
                     ))
-                    self.factors[X.name][axis] = self._factor_params[-1]
+                    self._factors[X.name][axis] = self._factor_params[-1]
 
         # For nonnegative factors, project onto positive orthant.
         self.apply_prox()
@@ -167,19 +168,19 @@ class TensorModel(nn.Module):
             mean_ndim = sum([X.ndim for X in Xs]) / len(Xs)
             for axis in shared_axes:
                 fctr = self.shared_factors[axis]
-                fctr /= torch.norm(fctr)
+                fctr /= torch.norm(softplus(fctr))
                 fctr *= mean_sqnorm ** (1 / mean_ndim) 
 
             # Then, scale non-shared factors.
             for X in Xs:
                 est_sqnorm = torch.sum(torch.prod(
-                    torch.stack([f @ f.T for f in self.factors[X.name].values()]),
+                    torch.stack([f @ f.T for f in self.get_factors(X.name)]),
                     axis=0
                 ))
                 _n = sum([(axis not in self.shared_axes) for axis in X.axes])
                 for axis in X.axes:
                     if axis not in self.shared_axes:
-                        self.factors[X.name][axis] *= (
+                        self._factors[X.name][axis] *= (
                             (X.sqnorm / est_sqnorm) ** (1 / _n)
                         )
 
@@ -240,10 +241,10 @@ class TensorModel(nn.Module):
         for X in self.Xs:
             for axis, nonneg in zip(X.axes, X.nonneg):
                 if nonneg == "hard":
-                    self.factors[X.name][axis].relu_()
+                    self._factors[X.name][axis].relu_()
 
     def get_factors(self, tensor_name):
-        fctrs = dict()
+        fctrs = []
         if tensor_name not in self.tensor_names:
             raise ValueError(
                 f"AnnotatedTensor with name '{tensor_name}' not found."
@@ -252,33 +253,23 @@ class TensorModel(nn.Module):
             if X.name == tensor_name:
                 for axis, nonneg in zip(X.axes, X.nonneg):
                     if nonneg == "soft":
-                        fctrs[axis] = softplus(
-                            self.factors[X.name][axis]
-                        ).detach()
+                        fctrs.append(softplus(
+                            self._factors[X.name][axis]
+                        ))
                     else:
-                        fctrs[axis] = (
-                            self.factors[X.name][axis]
-                        ).detach()
+                        fctrs.append(self._factors[X.name][axis])
                 return fctrs
 
     def reconstruction_loss(self):
         loss = torch.tensor(0., device=self.device)
         for X, w in zip(self.Xs, self.wx):
-            fctrs = []
-            for axis, nonneg in zip(X.axes, X.nonneg):
-                if nonneg == "soft":
-                    fctrs.append(
-                        softplus(self.factors[X.name][axis])
-                    )
-                else:
-                    fctrs.append(
-                        self.factors[X.name][axis]
-                    )
+            fctrs = self.get_factors(X.name)
             loss += w * X.reconstruction_loss(fctrs)
         return loss
 
-    def decoding_loss(self):
+    def decoding_loss(self, return_confusion_matrices=False):
         loss = torch.tensor(0., device=self.device)
+        confusions = []
         if self.ys is not None:
             for y, w, A, b in zip(self.ys, self.wy, self.readouts, self.biases):
                 
@@ -291,11 +282,11 @@ class TensorModel(nn.Module):
                     if axis != y.axis:
                         if nonneg:
                             fctrs.append(
-                                softplus(self.factors[X.name][axis])
+                                softplus(self._factors[X.name][axis])
                             )
                         else:
                             fctrs.append(
-                                self.factors[X.name][axis]
+                                self._factors[X.name][axis]
                             )
 
                 # Optionally, restrict our prediction to a limited number of components.
@@ -317,12 +308,15 @@ class TensorModel(nn.Module):
                 # We apply an affine transformation to achieve an output with
                 # shape (n_obs, num_features). For example, if y is a categorical
                 # predicted variable, num_features == num_classes.
-                out = (A @ hidden + b[:, None]).T
-                loss += w * y.decoding_loss(out)
+                logits = (A @ hidden + b[:, None]).T
+                loss += w * y.decoding_loss(logits)
 
-        return loss
+                confusions.append(y.confusion_matrix(logits))
+
+        if return_confusion_matrices:
+            return loss, confusions
+        else:
+            return loss
 
     def total_loss(self):
         return self.reconstruction_loss() + self.decoding_loss()
-
-

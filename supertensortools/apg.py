@@ -1,6 +1,5 @@
 import torch
 from torch.optim import Optimizer
-from torch.optim.optimizer import required
 import warnings
 from tqdm import tqdm
 
@@ -83,7 +82,7 @@ class BacktrackingProxGrad(Optimizer):
     Implements Proximal Gradient Method with adaptive / backtracking learning rate.
     """
     def __init__(
-            self, params, lr=required,
+            self, params, lr=1.0,
             lr_backtrack_factor=0.5, max_backtracks=1000,
             lr_tuning_patience=10
         ):
@@ -177,7 +176,7 @@ class AcceleratedProxGrad(Optimizer):
     """
     def __init__(
             self, params,
-            lr=required, init_momentum=required,
+            lr=1.0, init_momentum=1.0,
             lr_backtrack_factor=0.5,
             momentum_backtrack_factor=0.8
         ):

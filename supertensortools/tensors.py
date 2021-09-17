@@ -144,6 +144,13 @@ class CategoricalVariable:
         else:
             return cross_entropy(logits, self.data)
 
+    def confusion_matrix(self, logits):
+        preds = torch.argmax(logits, axis=1)
+        m = torch.zeros(self.num_features, self.num_features)
+        for i, j in zip(self.data, preds):
+            m[i, j] += 1
+        return m
+
 
 class ScalarVariable:
     """
@@ -176,3 +183,4 @@ class ScalarVariable:
 
     def decoding_loss(self, pred):
         return mse_loss(pred, self.data)
+
