@@ -16,11 +16,12 @@ X = stt.AnnotatedTensor(
     axes=["trials", "face_rhythm_component", "timebins"],
 )
 y = stt.CategoricalVariable(
-    tensor="face_tensor", axis="trials", data=_y, num_classes=num_classes
+    tensor="face_tensor", axis="trials", data=_y,
+    num_classes=num_classes, nonneg=True
 )
 
 # Create model
-alpha = 0.9   # tradeoff between reconstructing tensor and decoding trial labels.
+alpha = 0.001   # tradeoff between reconstructing tensor and decoding trial labels.
 model = stt.TensorModel(
     Xs=[X], ys=[y], rank=6, wx=[alpha], wy=[1 - alpha]
 )
@@ -35,7 +36,7 @@ print("Total Loss:", model.total_loss())
 
 # Fit model
 trace = stt.fit_alt_apg(
-    model, patience=100, rtol=1e-4, atol=1e-5, max_iter=2500,
+    model, patience=2500, rtol=1e-4, atol=1e-5, max_iter=2500,
     trace_decoding_loss=True, trace_reconstruction_loss=True,
 )
 
@@ -53,9 +54,7 @@ ax.set_xlabel("iterations")
 ax.set_ylabel("loss")
 ax.legend()
 
-face_factors = model.get_factors("face_tensor")
-
 fig, ax = plt.subplots(1, 1)
-ax.plot(face_factors["timebins"].T)
+ax.plot(model.get_factors("face_tensor")[2].detach().T)
 
 plt.show()

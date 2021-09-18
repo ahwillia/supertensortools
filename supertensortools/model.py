@@ -188,7 +188,7 @@ class TensorModel(nn.Module):
         self.shared_readout_axes = shared_readout_axes
         self._readout_params = torch.nn.ParameterList([])
         self._bias_params = torch.nn.ParameterList([])
-        self.readouts = []
+        self._readouts = []
         self.biases = []
         self.shared_readouts = dict()
         self.shared_biases = dict()
@@ -211,11 +211,11 @@ class TensorModel(nn.Module):
                 ))
             self.shared_readouts[axis] = self._readout_params[-1]
             self.shared_biases[axis] = self._bias_params[-1]
-        self.readouts = []
+        self._readouts = []
         self.biases = []
         for y in ys:
             if y.axis in shared_readout_axes:
-                self.readouts.append(self.shared_readouts[y.axis])
+                self._readouts.append(self.shared_readouts[y.axis])
                 self.biases.append(self.shared_biases[y.axis])
             elif y.components is None:
                 self._readout_params.append(nn.Parameter(
@@ -224,7 +224,7 @@ class TensorModel(nn.Module):
                 self._bias_params.append(nn.Parameter(
                     torch.zeros(y.num_features, device=device)
                 ))
-                self.readouts.append(self._readout_params[-1])
+                self._readouts.append(self._readout_params[-1])
                 self.biases.append(self._bias_params[-1])
             else:
                 self._readout_params.append(nn.Parameter(
@@ -233,7 +233,7 @@ class TensorModel(nn.Module):
                 self._bias_params.append(nn.Parameter(
                     torch.zeros(y.num_features, device=device)
                 ))
-                self.readouts.append(self._readout_params[-1])
+                self._readouts.append(self._readout_params[-1])
                 self.biases.append(self._bias_params[-1])
 
     @torch.no_grad()
@@ -260,6 +260,15 @@ class TensorModel(nn.Module):
                         fctrs.append(self._factors[X.name][axis])
                 return fctrs
 
+    def get_readouts(self):
+        readouts = []
+        for y, raw_readout in zip(self.ys, self._readouts):
+            if y.nonneg:
+                readouts.append(softplus(raw_readout))
+            else:
+                readouts.append(raw_readout)
+        return readouts
+
     def reconstruction_loss(self):
         loss = torch.tensor(0., device=self.device)
         for X, w in zip(self.Xs, self.wx):
@@ -271,7 +280,7 @@ class TensorModel(nn.Module):
         loss = torch.tensor(0., device=self.device)
         confusions = []
         if self.ys is not None:
-            for y, w, A, b in zip(self.ys, self.wy, self.readouts, self.biases):
+            for y, w, A, b in zip(self.ys, self.wy, self.get_readouts(), self.biases):
                 
                 # Find the tensor associated with dependent variable y.
                 X = self.Xs[self.tensor_names.index(y.tensor)]

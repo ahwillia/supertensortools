@@ -82,6 +82,9 @@ def fit_alt_apg(
                     print("Converged: reached relative tolerance. rImp: ", rel_imp)
                 trace["converged"] = True
 
+    if verbose:
+        pbar.close()
+
     if return_learning_rates:
         return (
             optimizers[0].prxgrad.param_groups[0]["lr"],

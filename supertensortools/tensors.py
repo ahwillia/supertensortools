@@ -89,7 +89,8 @@ class CategoricalVariable:
     """
 
     def __init__(
-            self, *, tensor, axis, data, num_classes, components=None, weighted_loss=True
+            self, *, tensor, axis, data, num_classes, components=None,
+            weighted_loss=True, nonneg=False
         ):
         if not isinstance(data, torch.Tensor):
             raise ValueError(
@@ -129,6 +130,7 @@ class CategoricalVariable:
         self.num_features = num_classes
         self.components = components
         self.weighted_loss = weighted_loss
+        self.nonneg = nonneg
 
         if weighted_loss:
             self.weights = torch.tensor(
